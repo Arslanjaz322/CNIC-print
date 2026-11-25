@@ -33,11 +33,16 @@ export async function runScanEnhance(dataUrl: string, _width: number, _height: n
       }),
     });
     if (!res.ok) {
-      console.error("scan enhance failed", res.status, await res.text());
+      const detail = await res.text();
+      console.error("scan enhance failed", res.status, detail);
+      let msg = detail.slice(0, 160);
+      try {
+        msg = (JSON.parse(detail) as { error?: { message?: string } }).error?.message ?? msg;
+      } catch {}
       if (res.status === 402) return { image: null, error: "OpenRouter credits have run out" };
       if (res.status === 429) return { image: null, error: "too many requests, try again shortly" };
       if (res.status === 401 || res.status === 403) return { image: null, error: "OpenRouter key was rejected" };
-      return { image: null, error: "AI service error" };
+      return { image: null, error: `OpenRouter ${res.status}: ${msg}` };
     }
     const json = (await res.json()) as {
       choices?: { message?: { images?: { image_url?: { url?: string } }[] } }[];
