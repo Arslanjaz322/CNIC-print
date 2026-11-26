@@ -158,9 +158,20 @@
   border: .6mm solid var(--primary-soft); border-radius: 2.6mm; padding: 2.2mm 8mm;
 }
 #app .up button:hover { background: var(--accent); border-color: var(--primary); }
-#app .tb { position: absolute; top: 3px; right: 3px; display: none; gap: 3px; }
+#app .tb { position: absolute; top: 3px; right: 3px; display: none; gap: 3px; z-index: 3; }
 #app .cell:hover .tb, #app .cell.sel .tb { display: flex; }
 #app .tb button { padding: 2px 8px; font-size: 12px; border-radius: 7px; background: var(--glass-strong); backdrop-filter: blur(8px); }
+#app .cell .dl-btn {
+  position: absolute; right: 4px; bottom: 4px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; font-size: 11px; font-weight: 600; border-radius: 7px;
+  background: var(--glass-strong); color: var(--accent-foreground);
+  border: 1px solid var(--primary-soft); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px oklch(0.25 0.05 165 / .18);
+}
+#app .cell .dl-btn:hover { background: var(--gradient-primary); color: var(--primary-foreground); border-color: transparent; }
+#app .cell .dl-btn.compact { padding: 4px; }
+#app .cell .cap ~ .dl-btn { bottom: 5mm; }
 
 /* overlays */
 #app .ov { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--overlay); backdrop-filter: blur(6px); }
@@ -272,7 +283,7 @@
   #app { display: block !important; height: auto !important; padding: 0 !important; background: none !important; }
   #app > *:not(#pv) { display: none !important; }
   #app #pv { position: static !important; display: block !important; background: var(--paper) !important; backdrop-filter: none !important; }
-  #app .bar, #app .note { display: none !important; }
+  #app .bar, #app .note, #app .tb, #app .dl-btn { display: none !important; }
   #app .holder { padding: 0 !important; overflow: visible !important; line-height: 0 !important; height: auto !important; }
   #app .zw { zoom: 1 !important; display: block !important; }
   #app .sheet { box-shadow: none !important; margin: 0 !important; overflow: hidden !important; break-inside: avoid; border-radius: 0 !important; }

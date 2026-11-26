@@ -67,9 +67,10 @@ export const TOOL_MARKUP = `
    <div class="bt"><button id="gray">Grayscale</button><button id="sepia">Sepia</button><button id="reset">Reset</button></div>
   </section>
   <section class="sec enh">
-   <h2><span class="ai-badge">${I.spark}</span>AI enhance</h2>
+   <h2><span class="ai-badge">${I.spark}</span>Free Scan Enhance</h2>
    <label class="c"><input type="checkbox" id="enh"> Auto-enhance to 4K on upload</label>
-   <div class="sc">Scanner-style clean-up: flattens and crops to the card, removes shadows and glare, sharpens text — keeps every text, number and signature unaltered.</div>
+   <div class="r"><span>Enhance mode</span><select id="enhMode"><option value="auto">Auto (Smart)</option><option value="doc">CNIC / Doc Scan</option><option value="photo">Photo Pro 4K</option></select></div>
+   <div class="sc">100% free &amp; keyless scanner clean-up: removes shadows and glare, clears background cast, sharpens text &amp; details, and upscales to 4K.</div>
    <div class="bt"><button id="pasteBtn" class="ic">${I.clip}<span>Paste image</span></button></div>
   </section>
   <section class="sec">

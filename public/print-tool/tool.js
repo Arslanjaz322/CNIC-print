@@ -69,7 +69,7 @@ function sheet(ed,sl=S.slots){
    if(S.mode!=='photo')im.style.objectFit='cover';if(S.outline)im.classList.add('ol');if(S.mode==='photo'&&!S.bless){const rr=S.rotate&&(c.w>c.h)!==(s.w>s.h)&&Math.abs(s.w-s.h)>=s.w*.05,sw=rr?s.h:s.w,shh=rr?s.w:s.h,k=Math.min(c.w/sw,(c.h-(S.name?4:0))/shh);im.style.cssText+=`flex:none;width:${sw*k}mm;height:${shh*k}mm`}
    d.append(im);
    if(S.name){const p=document.createElement('div');p.className='cap';p.textContent=s.name;d.append(p)}
-   if(ed)d.insertAdjacentHTML('beforeend','<div class="tb"><button data-a="crop">Crop</button><button data-a="auto">Auto</button><button data-a="del">✕</button></div>');
+   if(ed)d.insertAdjacentHTML('beforeend',`<div class="tb"><button data-a="crop">Crop</button><button data-a="auto">Auto</button><button data-a="del">✕</button></div><button class="dl-btn${c.w<45?' compact':''}" data-a="dl" title="Download enhanced image" aria-label="Download enhanced image"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>${c.w<45?'':'<span>Download</span>'}</button>`);
   }else if(c.w<50)d.innerHTML='<div class="up"><button data-a="pick" style="font-size:3mm;padding:1mm 2.5mm;border-width:.3mm;border-radius:1mm">+ Upload</button></div>';else d.innerHTML='<div class="up"><div class="cf" data-a="pick"><span>Choose file</span>No file chosen</div><button data-a="pick">Upload a file</button></div>';
   sh.append(d)});
  return sh}
@@ -79,6 +79,7 @@ const fit=(wrap,pw,box,ph)=>{let k=Math.max(.15,Math.min(.7,(box.clientWidth-34)
 function render(){
  $('#rows').value=S.rows;$('#cols').value=S.cols;$('#name').value=S.name?1:0;$('#gap').value=S.gap;
  $('#outline').checked=$('#outline2').checked=S.outline;$('#rotate').checked=S.rotate;$('#enh').checked=ENH.on;
+ if($('#enhMode'))$('#enhMode').value=ENH.mode;
  $('#gray').classList.toggle('on',S.filter==='gray');$('#sepia').classList.toggle('on',S.filter==='sepia');
  document.querySelectorAll('[data-m]').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
  
@@ -137,20 +138,50 @@ const tick=()=>new Promise(r=>setTimeout(r,16));
 const capPx=()=>{const[pw,ph]=dims(),g=geom(pw,ph)[0]||{w:100,h:100};return Math.round(cl(Math.max(g.w,g.h)/25.4*600,2400,3840))};
 function capC(c){const k=Math.min(1,capPx()/Math.max(c.width,c.height));if(k>=1)return c;const o=newC(c.width*k,c.height*k),x=o.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(c,0,0,o.width,o.height);return o}
 
-/* ---------- auto crop (detects the card / photo on a plain background) ---------- */
+/* ---------- auto crop (trims outer desk/scanner borders accurately without clipping card margins) ---------- */
 function autoCrop(c){
  const k=Math.min(1,500/Math.max(c.width,c.height)),w=Math.max(4,Math.round(c.width*k)),h=Math.max(4,Math.round(c.height*k));
  const t=newC(w,h),x=t.getContext('2d');x.drawImage(c,0,0,w,h);
- const d=x.getImageData(0,0,w,h).data,p=(i,j)=>(j*w+i)*4,ring=[];
- for(let i=0;i<w;i++)ring.push(p(i,0),p(i,h-1));for(let j=0;j<h;j++)ring.push(p(0,j),p(w-1,j));
- const med=n=>{const a=ring.map(q=>d[q+n]).sort((m,o)=>m-o);return a[a.length>>1]};
- const bg=[med(0),med(1),med(2)],rc=new Uint16Array(h),cc=new Uint16Array(w);
- for(let j=0;j<h;j++)for(let i=0;i<w;i++){const q=p(i,j);if(Math.abs(d[q]-bg[0])+Math.abs(d[q+1]-bg[1])+Math.abs(d[q+2]-bg[2])>60){rc[j]++;cc[i]++}}
- let y0=0,y1=h-1,x0=0,x1=w-1;
- while(y0<h&&rc[y0]<w*.02)y0++;while(y1>y0&&rc[y1]<w*.02)y1--;
- while(x0<w&&cc[x0]<h*.02)x0++;while(x1>x0&&cc[x1]<h*.02)x1--;
+ const d=x.getImageData(0,0,w,h).data,p=(i,j)=>(j*w+i)*4;
+ const medRgb=coords=>{
+  const a=coords.map(q=>[d[q],d[q+1],d[q+2]]);
+  return[0,1,2].map(n=>{const v=a.map(z=>z[n]).sort((m,o)=>m-o);return v[v.length>>1]})};
+ const colSim=(q,rgb)=>Math.abs(d[q]-rgb[0])+Math.abs(d[q+1]-rgb[1])+Math.abs(d[q+2]-rgb[2]);
+ const top=[],bot=[],lft=[],rgt=[];
+ for(let i=0;i<w;i++){top.push(p(i,0));bot.push(p(i,h-1))}
+ for(let j=0;j<h;j++){lft.push(p(0,j));rgt.push(p(w-1,j))}
+ const bT=medRgb(top),bB=medRgb(bot),bL=medRgb(lft),bR=medRgb(rgt);
+ const isUniform=(coords,rgb)=>{let ok=0;for(const q of coords)if(colSim(q,rgb)<45)ok++;return ok>coords.length*.7};
+ const uT=isUniform(top,bT),uB=isUniform(bot,bB),uL=isUniform(lft,bL),uR=isUniform(rgt,bR);
+ const isWhite=rgb=>rgb[0]>222&&rgb[1]>222&&rgb[2]>222&&Math.max(...rgb)-Math.min(...rgb)<28;
+ let x0=0,x1=w-1,y0=0,y1=h-1;
+ const rowMatch=(y,rgb)=>{let m=0,far=0;for(let i=x0;i<=x1;i++){const d0=colSim(p(i,y),rgb);if(d0<56)m++;else if(d0>90)far++}const len=x1-x0+1;return m>len*.74&&far<len*.18};
+ const colMatch=(x,rgb)=>{let m=0,far=0;for(let j=y0;j<=y1;j++){const d0=colSim(p(x,j),rgb);if(d0<56)m++;else if(d0>90)far++}const len=y1-y0+1;return m>len*.74&&far<len*.18};
+ if(uT&&!isWhite(bT))while(y0<h*.45&&rowMatch(y0,bT))y0++;
+ if(uB&&!isWhite(bB))while(y1>h*.55&&rowMatch(y1,bB))y1--;
+ if(uL&&!isWhite(bL))while(x0<w*.45&&colMatch(x0,bL))x0++;
+ if(uR&&!isWhite(bR))while(x1>w*.55&&colMatch(x1,bR))x1--;
+ const rc=new Uint16Array(h),cc=new Uint16Array(w);
+ const sides=[];if(uT)sides.push(bT);if(uB)sides.push(bB);if(uL)sides.push(bL);if(uR)sides.push(bR);
+ if(sides.length>=2){
+  const bg=[0,1,2].map(n=>{const v=sides.map(s=>s[n]).sort((a,b)=>a-b);return v[v.length>>1]});
+  const thr=isWhite(bg)?42:52;
+  for(let j=y0;j<=y1;j++)for(let i=x0;i<=x1;i++)if(colSim(p(i,j),bg)>thr){rc[j]++;cc[i]++}
+  let sy0=y0,sy1=y1,sx0=x0,sx1=x1;
+  const cw=x1-x0+1,ch=y1-y0+1;
+  while(sy0<sy1&&rc[sy0]<cw*.02)sy0++;
+  while(sy1>sy0&&rc[sy1]<cw*.02)sy1--;
+  while(sx0<sx1&&cc[sx0]<ch*.02)sx0++;
+  while(sx1>sx0&&cc[sx1]<ch*.02)sx1--;
+  if((sx1-sx0)*(sy1-sy0)>=.08*w*h){
+   const pad=isWhite(bg)?.02*Math.max(w,h):0;
+   if(!isWhite(bg)||sy0-y0>h*.05||y1-sy1>h*.05||sx0-x0>w*.05||x1-sx1>w*.05){
+    x0=Math.max(x0,sx0-pad);y0=Math.max(y0,sy0-pad);x1=Math.min(x1,sx1+pad);y1=Math.min(y1,sy1+pad);
+   }
+  }
+ }
  if((x1-x0)*(y1-y0)<.08*w*h)return null;
- const pad=.01*Math.max(w,h);x0=Math.max(0,x0-pad);y0=Math.max(0,y0-pad);x1=Math.min(w-1,x1+pad);y1=Math.min(h-1,y1+pad);
+ if(x0<=1&&y0<=1&&x1>=w-2&&y1>=h-2)return{x:0,y:0,w:c.width,h:c.height};
  return{x:x0/k,y:y0/k,w:(x1-x0)/k,h:(y1-y0)/k}}
 function cropC(c,r){const o=newC(r.w,r.h);o.getContext('2d').drawImage(c,r.x,r.y,r.w,r.h,0,0,o.width,o.height);return o}
 /* a slot = {orig: enhanced full photo, src: print-ready crop, w,h,name, cs: crop settings so it can be re-edited} */
@@ -188,9 +219,14 @@ async function toCanvas(f){
  const c=newC(im.naturalWidth*k,im.naturalHeight*k),x=c.getContext('2d');
  x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.imageSmoothingQuality='high';x.drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);return c}
 
-/* ---------- auto enhance: clean + upscale to 4K (3840 px long edge) + natural detail ---------- */
-/* the AI scan prompt lives on the server (src/lib/enhance.server.ts) */
-const ENH={on:true},FOURK=3840;
+/* ---------- auto enhance: all-time free keyless CamScanner-grade scan + 4K upscale ---------- */
+const ENH=(()=>{
+ let m='auto',ad=false,on=true;
+ try{const sv=JSON.parse(localStorage.getItem('cnicEnhCfg')||'{}');if(typeof sv.on==='boolean')on=sv.on;if(['auto','doc','photo'].includes(sv.mode))m=sv.mode;if(typeof sv.autoDl==='boolean')ad=sv.autoDl}catch(e){}
+ return{on,mode:m,autoDl:ad};
+})();
+const saveEnh=()=>{try{localStorage.setItem('cnicEnhCfg',JSON.stringify(ENH))}catch(e){}};
+const FOURK=3840;
 const CF=(()=>{try{const x=newC(1,1).getContext('2d');x.filter='blur(1px)';return x.filter==='blur(1px)'}catch(e){return false}})();
 function blur(src,w,h,r){
  const t=new Uint8ClampedArray(src.length),o=new Uint8ClampedArray(src.length),m=2*r+1,cl=(v,a)=>v<0?0:v>a?a:v;
@@ -204,18 +240,100 @@ function blurPx(c,r){
  const w=c.width,h=c.height;
  if(CF){const t=newC(w,h),x=t.getContext('2d');x.filter='blur('+r+'px)';x.drawImage(c,0,0);x.filter='none';return x.getImageData(0,0,w,h).data}
  return blur(c.getContext('2d').getImageData(0,0,w,h).data,w,h,Math.max(1,Math.round(r)))}
-/* step 1: restore faded colour (auto levels) and calm sensor noise in flat areas, before upscaling */
-function cleanC(c){
- const w=c.width,h=c.height,n=w*h,x=c.getContext('2d'),id=x.getImageData(0,0,w,h),d=id.data,hist=new Uint32Array(256);
- for(let i=0;i<n;i++)hist[(d[i*4]*77+d[i*4+1]*150+d[i*4+2]*29)>>8]++;
- let lo=0,hi=255,a=0;const t=n*.004;
- for(;lo<255;lo++){a+=hist[lo];if(a>t)break}
- a=0;for(;hi>0;hi--){a+=hist[hi];if(a>t)break}
- if(hi-lo>40){const k=255/(hi-lo);for(let i=0;i<n*4;i++)if((i&3)!==3)d[i]=(d[i]-lo)*k}
+/* local bright-envelope illumination map (dilation + smooth blur on downscaled grid) */
+function brightEnv(c){
+ const w=c.width,h=c.height,sc=Math.min(1,192/Math.max(w,h)),mw=Math.max(12,Math.round(w*sc)),mh=Math.max(12,Math.round(h*sc));
+ const t=newC(mw,mh),tx=t.getContext('2d');tx.imageSmoothingQuality='high';tx.drawImage(c,0,0,mw,mh);
+ let id=tx.getImageData(0,0,mw,mh),d=id.data;
+ for(let pass=0;pass<2;pass++){
+  const nxt=new Uint8ClampedArray(d.length);
+  for(let y=0;y<mh;y++)for(let x=0;x<mw;x++){
+   const q=(y*mw+x)*4;let m0=0,m1=0,m2=0;
+   for(let dy=-1;dy<=1;dy++){const yy=cl(y+dy,0,mh-1);for(let dx=-1;dx<=1;dx++){const qq=(yy*mw+cl(x+dx,0,mw-1))*4;if(d[qq]>m0)m0=d[qq];if(d[qq+1]>m1)m1=d[qq+1];if(d[qq+2]>m2)m2=d[qq+2]}}
+   nxt[q]=m0;nxt[q+1]=m1;nxt[q+2]=m2;nxt[q+3]=255}
+  d=nxt}
+ const sm=blur(blur(d,mw,mh,5),mw,mh,4);
+ /* estimate neutral white point from brightest low-saturation envelope pixels */
+ const pts=[];
+ for(let i=0;i<mw*mh;i++){const q=i*4,r=sm[q],g=sm[q+1],b=sm[q+2],mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx>70&&(mx-mn)/(mx+1)<.28)pts.push([r,g,b,(r*77+g*150+b*29)>>8])}
+ pts.sort((a,b)=>b[3]-a[3]);
+ let wp=[255,255,255];
+ if(pts.length){const n=Math.max(1,Math.ceil(pts.length*.2));let sr=0,sg=0,sb=0;for(let i=0;i<n;i++){sr+=pts[i][0];sg+=pts[i][1];sb+=pts[i][2]}wp=[sr/n,sg/n,sb/n]}
+ id.data.set(sm);tx.putImageData(id,0,0);
+ const full=newC(w,h),fx=full.getContext('2d');fx.imageSmoothingEnabled=true;fx.imageSmoothingQuality='high';fx.drawImage(t,0,0,w,h);
+ return{data:fx.getImageData(0,0,w,h).data,wp}}
+function isDocLike(c){
+ if(S.mode!=='photo')return true;
+ const w=64,h=64,t=newC(w,h),tx=t.getContext('2d');tx.drawImage(c,0,0,w,h);
+ const d=tx.getImageData(0,0,w,h).data;let bg=0;
+ for(let i=0;i<w*h;i++){const q=i*4,mx=Math.max(d[q],d[q+1],d[q+2]),mn=Math.min(d[q],d[q+1],d[q+2]),L=(d[q]*77+d[q+1]*150+d[q+2]*29)>>8;if(L>148&&(mx-mn)/(mx+1)<.28)bg++}
+ return bg/(w*h)>.28}
+/* fast smooth local mean for micro-contrast clarity */
+function localMean(c){
+ const w=c.width,h=c.height,sc=Math.min(1,220/Math.max(w,h)),mw=Math.max(16,Math.round(w*sc)),mh=Math.max(16,Math.round(h*sc));
+ const t=newC(mw,mh),tx=t.getContext('2d');tx.imageSmoothingQuality='high';tx.drawImage(c,0,0,mw,mh);
+ let id=tx.getImageData(0,0,mw,mh);
+ id.data.set(blur(id.data,mw,mh,4));tx.putImageData(id,0,0);
+ const full=newC(w,h),fx=full.getContext('2d');fx.imageSmoothingEnabled=true;fx.imageSmoothingQuality='high';fx.drawImage(t,0,0,w,h);
+ return fx.getImageData(0,0,w,h).data}
+/* step 1: Natural scanner clean-up — balanced cast removal, shadow lift, minimum white-paper boost, micro-contrast & denoise */
+function cleanC(c,mode){
+ const doc=mode==='doc'||(mode==='auto'&&isDocLike(c));
+ const w=c.width,h=c.height,n=w*h,x=c.getContext('2d'),id=x.getImageData(0,0,w,h),d=id.data;
+ const{data:env,wp}=brightEnv(c);
+ const loc=localMean(c);
+ const wpL=.299*wp[0]+.587*wp[1]+.114*wp[2]||224;
+ const targetL=Math.min(234,Math.max(205,wpL*1.06));
+ const wbMix=doc?.48:.26;
+ const gR=1+(cl(wpL/Math.max(60,wp[0]),.86,1.18)-1)*wbMix;
+ const gG=1+(cl(wpL/Math.max(60,wp[1]),.86,1.18)-1)*wbMix;
+ const gB=1+(cl(wpL/Math.max(60,wp[2]),.86,1.18)-1)*wbMix;
+ const softHi=v=>v>234?234+(v-234)*21/(21+(v-234)):v;
+ const clarity=doc?.22:.14;
+ for(let i=0;i<n;i++){
+  const q=i*4;
+  let r=d[q]*gR,g=d[q+1]*gG,b=d[q+2]*gB;
+  const er=env[q],eg=env[q+1],eb=env[q+2],el=.299*er+.587*eg+.114*eb;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b),sat=(mx-mn)/(mx+1);
+  const l0=.299*r+.587*g+.114*b;
+  const hiProt=1-.72*cl((l0-155)/85,0,1);
+  if(doc){
+   const gain=el<targetL?cl(targetL/Math.max(62,el),1,1.52):1;
+   const alpha=.50*hiProt*(1-.35*cl((sat-.14)/.42,0,1));
+   const egain=1+(gain-1)*alpha;
+   r=softHi(r*egain);g=softHi(g*egain);b=softHi(b*egain);
+   if(sat<.22&&el>85){
+    const cast=.24*(1-sat/.22)*hiProt;
+    r*=1+(el/Math.max(60,er*gR)-1)*cast;g*=1+(el/Math.max(60,eg*gG)-1)*cast;b*=1+(el/Math.max(60,eb*gB)-1)*cast}
+   /* local micro-contrast clarity — keeps text, signatures & facial details clear without halo ringing */
+   const lr=loc[q]*gR,lg=loc[q+1]*gG,lb=loc[q+2]*gB;
+   r+=cl((r-lr)*clarity,-16,16);g+=cl((g-lg)*clarity,-16,16);b+=cl((b-lb)*clarity,-16,16);
+   const lum=.299*r+.587*g+.114*b;
+   if(lum>190&&sat<.14){
+    const wPull=cl((lum-190)/52,0,1)*.16*(1-sat/.14);
+    r=r+(244-r)*wPull;g=g+(244-g)*wPull;b=b+(244-b)*wPull}
+   else if(lum>35&&lum<165&&sat<.24){
+    const dk=1-.09*(1-Math.abs(lum-100)/65)*(1-sat/.24);
+    r*=dk;g*=dk;b*=dk}
+  }else{
+   const gain=el<targetL?cl(targetL/Math.max(70,el),1,1.32):1,egain=1+(gain-1)*.32*hiProt;
+   r=softHi(r*egain);g=softHi(g*egain);b=softHi(b*egain);
+   const lr=loc[q]*gR,lg=loc[q+1]*gG,lb=loc[q+2]*gB;
+   r+=cl((r-lr)*clarity,-14,14);g+=cl((g-lg)*clarity,-14,14);b+=cl((b-lb)*clarity,-14,14)}
+  d[q]=cl(r,0,255);d[q+1]=cl(g,0,255);d[q+2]=cl(b,0,255)}
+ if(!doc){
+  const hist=new Uint32Array(256);
+  for(let i=0;i<n;i++)hist[(d[i*4]*77+d[i*4+1]*150+d[i*4+2]*29)>>8]++;
+  let lo=0,hi=255,a=0;const t=n*.003;
+  for(;lo<255;lo++){a+=hist[lo];if(a>t)break}
+  a=0;for(;hi>0;hi--){a+=hist[hi];if(a>t)break}
+  if(hi-lo>60&&(lo>14||hi<235)){
+   const k=Math.min(1.16,250/(hi-lo));
+   for(let i=0;i<n*4;i++)if((i&3)!==3){const st=cl((d[i]-lo)*k,0,255);d[i]=d[i]+(st-d[i])*.28}}}
  x.putImageData(id,0,0);
- const b1=blurPx(c,1),thr=Math.max(w,h)<1600?14:10;
- for(let i=0;i<n*4;i++){if((i&3)===3)continue;const df=d[i]-b1[i];if(Math.abs(df)<thr)d[i]-=df*.5}
- x.putImageData(id,0,0)}
+ const b1=blurPx(c,1),thr=Math.max(w,h)<1600?9:7;
+ for(let i=0;i<n*4;i++){if((i&3)===3)continue;const df=d[i]-b1[i];if(Math.abs(df)<thr)d[i]-=df*.38}
+ x.putImageData(id,0,0);return doc}
 /* step 2: step-wise high-quality upscale (max 1.5x per step keeps edges clean) */
 function upTo(c,L){
  let cur=c;
@@ -223,51 +341,48 @@ function upTo(c,L){
   const k=Math.min(1.5,L/Math.max(cur.width,cur.height)),n=newC(cur.width*k,cur.height*k),x=n.getContext('2d');
   x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(cur,0,0,n.width,n.height);cur=n}
  return cur}
-/* step 3: edge-aware unsharp mask - threshold + overshoot limit = no halos, no noise boost */
+/* step 3: crisp, halo-free edge-aware unsharp mask */
 function sharpC(c,amt,rad){
- const w=c.width,h=c.height,x=c.getContext('2d'),id=x.getImageData(0,0,w,h),d=id.data,b=blurPx(c,rad),m=Math.ceil(rad*3)+1,LIM=36;
+ const w=c.width,h=c.height,x=c.getContext('2d'),id=x.getImageData(0,0,w,h),d=id.data,b=blurPx(c,rad),m=Math.ceil(rad*3)+1,LIM=20;
  for(let y=m;y<h-m;y++){let i=(y*w+m)*4;for(let xx=m;xx<w-m;xx++,i+=4)for(let n=0;n<3;n++){
-  const e=d[i+n]-b[i+n];if(e>2||e<-2)d[i+n]+=amt*(e>LIM?LIM:e<-LIM?-LIM:e)}}
+  const e=d[i+n]-b[i+n];if(e>3||e<-3)d[i+n]+=amt*(e>LIM?LIM:e<-LIM?-LIM:e)}}
  x.putImageData(id,0,0)}
 async function enhance(c,say=()=>{}){
  const L0=Math.max(c.width,c.height);
- say('Cleaning');await tick();cleanC(c);
+ say('Scan clean-up');await tick();const doc=cleanC(c,ENH.mode);
  let o=c;
  if(L0<FOURK){say('Upscaling to 4K');await tick();o=upTo(c,FOURK)}
- say('Restoring detail');await tick();
+ say('Refining clarity');await tick();
  const s=Math.max(1,Math.max(o.width,o.height)/L0);
- sharpC(o,Math.min(1.1,.5+.12*s),Math.min(3,.7+.3*s));
+ sharpC(o,Math.min(doc?.48:.34,(doc?.26:.18)+.05*s),Math.min(1.5,.56+.15*s));
  return o}
 
-/* AI scan clean-up (CamScanner-style, done on the server), then upscale to 4K + gentle sharpening */
-async function aiScan(c){
- if(typeof window.cnicAiEnhance!=='function')throw Error('AI enhance is not ready yet');
- /* send only the detected card (smaller upload, card fills the frame = faster + sharper text) */
- const r=autoCrop(c),src=r&&r.w*r.h<c.width*c.height*.92?cropC(c,r):c;
- const k=Math.min(1,1024/Math.max(src.width,src.height)),s=newC(src.width*k,src.height*k),x=s.getContext('2d');
- x.fillStyle='#fff';x.fillRect(0,0,s.width,s.height);x.imageSmoothingQuality='high';x.drawImage(src,0,0,s.width,s.height);
- const out=await window.cnicAiEnhance({image:s.toDataURL('image/jpeg',.85),width:s.width,height:s.height});
- const im=await loadImg(out),o=newC(im.naturalWidth,im.naturalHeight);o.getContext('2d').drawImage(im,0,0);return o}
-async function enhanceAI(c,say=()=>{}){
- say('AI scan clean-up',true);
- let o=await aiScan(c);const L0=Math.max(o.width,o.height);
- if(L0<FOURK){say('Upscaling to 4K',true);await tick();o=upTo(o,FOURK)}
- say('Sharpening',true);await tick();
- const s=Math.max(1,Math.max(o.width,o.height)/L0);
- sharpC(o,Math.min(.8,.35+.1*s),Math.min(2.4,.6+.25*s));
- return o}
+async function downloadSlot(s){
+ if(!s)return toast('Upload a photo first');
+ try{
+  const im=await loadImg(s.src),c=newC(im.naturalWidth,im.naturalHeight),x=c.getContext('2d');
+  const f=S.colour==='bw'||S.filter==='gray'?'grayscale(1)':S.filter==='sepia'?'sepia(1)':'none';
+  if(f!=='none')x.filter=f;
+  x.imageSmoothingQuality='high';x.drawImage(im,0,0);
+  const best=S.pq==='Best Photo',blob=await new Promise(r=>c.toBlob(r,best?'image/png':'image/jpeg',best?undefined:.95));
+  if(!blob)throw Error('blob');
+  const base=(s.name||'enhanced-image').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9_-]+/g,'_')||'enhanced-image';
+  const ext=best?'png':'jpg',u=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=u;a.download=`${base}_enhanced.${ext}`;document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),30000);
+  toast(`Downloaded ${base}_enhanced.${ext}`)
+ }catch(e){console.error(e);toast('Could not download enhanced image')}}
 
 async function addFiles(fs,idx){
  fs=[...fs].filter(isImg);
  if(!fs.length)return toast('Please choose JPG, PNG, WebP or PDF files');
- const out=[];let aiOk=0,aiErr='';
+ const out=[];
  for(const f of fs){
   const nm=f.name||'pasted image';
   try{
    toast('Loading '+nm+'…',true);await tick();
    let c=await toCanvas(f);
-   if(ENH.on){try{c=await enhanceAI(c,(m,st)=>toast(m+' '+nm+'…',st));aiOk++}
-    catch(e){console.error(e);aiErr=(e&&e.message)||'AI enhance failed';c=await enhance(c,m=>toast(m+' '+nm+'…',true))}}
+   if(ENH.on)c=await enhance(c,m=>toast(m+' '+nm+'…',true));
    const orig=await blobURL(c),r=autoCrop(c);
    out.push(await mk(orig,c,r,nm))
   }catch(e){console.error(e);toast('Could not read '+nm)}}
@@ -275,7 +390,7 @@ async function addFiles(fs,idx){
  const placed=[];
  mut(()=>{let p=S.pg,i=idx;out.forEach((s,n)=>{if(n){i++;for(;;){if(i>=count()){p++;i=0;S.pages[p]=S.pages[p]||[]}if(!S.pages[p][i])break;i++}}S.pages[p][i]=s;placed.push({p,i})});const L=placed[placed.length-1];S.sel=L&&L.p===S.pg?nextEmpty(L.i):-1});
  lastUp=out[out.length-1];
- toast(aiErr?'Photo added with standard 4K enhance — AI scan unavailable: '+aiErr:(ENH.on?'Photo added — AI scan clean-up, 4K & auto-cropped':'Photo added — auto-cropped')+'. Ctrl+C then Ctrl+V fills the next box.')}
+ toast((ENH.on?'Photo added — Free 4K scan clean-up & auto-cropped':'Photo added — auto-cropped')+'. Ctrl+C then Ctrl+V fills the next box.')}
 
 /* ---------- crop editor: ONE tool - 4 corner points + straighten / rotate / flip / zoom ---------- */
 let cMode=(()=>{try{return localStorage.getItem('cnicCropMode')==='rect'?'rect':'persp'}catch(e){return'persp'}})(),cDr=null;
@@ -414,7 +529,7 @@ $('#gray').onclick=()=>mut(()=>S.filter=S.filter==='gray'?'none':'gray');
 $('#sepia').onclick=()=>mut(()=>S.filter=S.filter==='sepia'?'none':'sepia');
 $('#reset').onclick=()=>mut(()=>{[S.rows,S.cols]=DEF[S.mode];Object.assign(S,{gap:4,outline:true,rotate:true,filter:'none',name:false})});
 $('#fill').onclick=()=>{const f=S.slots[0]||S.slots.find(Boolean);if(!f)return toast('Upload a photo first');mut(()=>{for(let i=0;i<count();i++)S.slots[i]=f})};
-$('#clear').onclick=()=>mut(()=>{S.pages=[[]];S.pg=0;S.sel=-1});
+$('#clear').onclick=()=>mut(()=>{S.pages=[[]];S.pg=0;S.sel=-1;lastUp=null});
 $('#undo').onclick=undo;$('#redo').onclick=redo;
 const openPd=()=>{$('#pd').hidden=false;paintLpv()};
 const rotBusy=()=>[...RC.values()].some(v=>v===null);
@@ -447,9 +562,10 @@ $('#zo').onclick=()=>zm(Z-.15);$('#zi').onclick=()=>zm(Z+.15);$('#zl').onclick=(
 $('#stage').addEventListener('click',e=>{
  const cell=e.target.closest('.cell');if(!cell)return;const i=+cell.dataset.i,a=e.target.closest('[data-a]')?.dataset.a;
  if(a==='pick'){tgt=i;$('#fi').click();return}
+ if(a==='dl'){const s=S.slots[i];if(s)downloadSlot(s);return}
  if(a==='crop'){S.sel=i;return openCrop(i)}
  if(a==='auto'){const s=S.slots[i];fullC(s.orig).then(async c=>{const r=autoCrop(c);if(!r)return toast('Could not detect edges — use Crop');const n=await mk(s.orig,c,r,s.name);mut(()=>S.slots[i]=n)});return}
- if(a==='del'){mut(()=>S.slots[i]=null);return}
+ if(a==='del'){mut(()=>{if(S.slots[i]===lastUp)lastUp=null;S.slots[i]=null});return}
  S.sel=i;render()});
 $('#fi').onchange=e=>{addFiles(e.target.files,tgt);e.target.value=''};
 $('#stage').addEventListener('dragover',e=>e.preventDefault());
@@ -497,7 +613,8 @@ $('#pasteBtn').onclick=async()=>{
  }catch(e){}
  if(clip)return pasteClip(i);
  toast('Press Ctrl+V to paste (on phone: long-press a box → Paste)')};
-$('#enh').onchange=e=>{ENH.on=e.target.checked};
+$('#enh').onchange=e=>{ENH.on=e.target.checked;saveEnh()};
+if($('#enhMode'))$('#enhMode').onchange=e=>{ENH.mode=e.target.value;saveEnh()};
 addEventListener('resize',render);
 addEventListener('afterprint',()=>{if(autoPv){autoPv=false;$('#pv').hidden=true}});
 addEventListener('beforeprint',()=>{if($('#pv').hidden){$('#pv').hidden=false;paintPv()}});
